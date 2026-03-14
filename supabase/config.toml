@@ -1,0 +1,55 @@
+project_id = "sfsjtljhrelctpxpzody"
+
+[functions.create-user]
+verify_jwt = false
+
+[functions.delete-user]
+verify_jwt = false
+
+[functions.update-user]
+verify_jwt = false
+
+[functions.send-status-notification]
+verify_jwt = false
+
+[functions.send-complaint-confirmation]
+verify_jwt = false
+
+[functions.test-sms]
+verify_jwt = false
+
+[functions.send-alert]
+verify_jwt = false
+
+[functions.process-upload-queue]
+verify_jwt = false
+
+[functions.webhooks-resend]
+verify_jwt = false
+
+[functions.receive-whatsapp-complaint]
+verify_jwt = false
+
+[functions.receive-evolution-webhook]
+verify_jwt = false
+
+[functions.interacao-log]
+verify_jwt = false
+
+[functions.cidadao-find-or-create]
+verify_jwt = false
+
+[functions.prefeitura-by-instance]
+verify_jwt = false
+
+[functions.criar-reclamacao-n8n]
+verify_jwt = false
+
+[functions.evolution-api-proxy]
+verify_jwt = false
+
+[functions.whatsapp-ai-agent]
+verify_jwt = false
+
+[functions.send-whatsapp-message]
+verify_jwt = true

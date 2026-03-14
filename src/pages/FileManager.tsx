@@ -1,93 +1,114 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Trash2, Upload, FileIcon, Image, Code, File, ArrowLeft } from "lucide-react";
+import { Trash2, Upload, FolderOpen, FileIcon, ArrowLeft, RefreshCw, Loader2 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "@/hooks/use-toast";
+import { supabase } from "@/integrations/supabase/client";
 
-interface ProjectFile {
+interface StorageFile {
   name: string;
-  path: string;
-  type: "image" | "code" | "config" | "other";
-  size?: string;
+  id: string;
+  created_at: string;
+  metadata: { size: number; mimetype: string } | null;
 }
 
-const initialFiles: ProjectFile[] = [
-  { name: "hero-beauty.jpg", path: "src/assets/hero-beauty.jpg", type: "image" },
-  { name: "service-hair.jpg", path: "src/assets/service-hair.jpg", type: "image" },
-  { name: "service-makeup.jpg", path: "src/assets/service-makeup.jpg", type: "image" },
-  { name: "service-nails.jpg", path: "src/assets/service-nails.jpg", type: "image" },
-  { name: "service-skincare.jpg", path: "src/assets/service-skincare.jpg", type: "image" },
-  { name: "favicon.ico", path: "public/favicon.ico", type: "image" },
-  { name: "placeholder.svg", path: "public/placeholder.svg", type: "image" },
-];
+const BUCKET = "project-files";
 
-const getFileIcon = (type: string) => {
-  switch (type) {
-    case "image": return <Image className="h-5 w-5 text-primary" />;
-    case "code": return <Code className="h-5 w-5 text-blue-500" />;
-    default: return <File className="h-5 w-5 text-muted-foreground" />;
-  }
+const formatSize = (bytes: number) => {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 };
 
 const FileManager = () => {
-  const [files, setFiles] = useState<ProjectFile[]>(initialFiles);
-  const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set());
-  const [uploadedFiles, setUploadedFiles] = useState<{ name: string; url: string; type: string }[]>([]);
+  const [files, setFiles] = useState<StorageFile[]>([]);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [loading, setLoading] = useState(true);
+  const [uploading, setUploading] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const navigate = useNavigate();
 
-  const toggleSelect = (path: string) => {
-    setSelectedFiles((prev) => {
+  const fetchFiles = async () => {
+    setLoading(true);
+    const { data, error } = await supabase.storage.from(BUCKET).list("", {
+      limit: 200,
+      sortBy: { column: "created_at", order: "desc" },
+    });
+    if (error) {
+      toast({ title: "Erro", description: error.message, variant: "destructive" });
+    } else {
+      setFiles((data as StorageFile[]) || []);
+    }
+    setLoading(false);
+  };
+
+  useEffect(() => {
+    fetchFiles();
+  }, []);
+
+  const toggleSelect = (name: string) => {
+    setSelected((prev) => {
       const next = new Set(prev);
-      if (next.has(path)) next.delete(path);
-      else next.add(path);
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
       return next;
     });
   };
 
   const selectAll = () => {
-    if (selectedFiles.size === files.length + uploadedFiles.length) {
-      setSelectedFiles(new Set());
+    if (selected.size === files.length) {
+      setSelected(new Set());
     } else {
-      const all = new Set([
-        ...files.map((f) => f.path),
-        ...uploadedFiles.map((f) => f.name),
-      ]);
-      setSelectedFiles(all);
+      setSelected(new Set(files.map((f) => f.name)));
     }
   };
 
-  const deleteSelected = () => {
-    setFiles((prev) => prev.filter((f) => !selectedFiles.has(f.path)));
-    setUploadedFiles((prev) => prev.filter((f) => !selectedFiles.has(f.name)));
-    toast({
-      title: "Arquivos removidos",
-      description: `${selectedFiles.size} arquivo(s) removido(s) com sucesso.`,
-    });
-    setSelectedFiles(new Set());
+  const deleteSelected = async () => {
+    if (selected.size === 0) return;
+    setDeleting(true);
+    const filesToDelete = Array.from(selected);
+    const { error } = await supabase.storage.from(BUCKET).remove(filesToDelete);
+    if (error) {
+      toast({ title: "Erro ao excluir", description: error.message, variant: "destructive" });
+    } else {
+      toast({ title: "Excluído", description: `${filesToDelete.length} arquivo(s) removido(s).` });
+      setSelected(new Set());
+      fetchFiles();
+    }
+    setDeleting(false);
   };
 
-  const handleUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const fileList = e.target.files;
-    if (!fileList) return;
+    if (!fileList || fileList.length === 0) return;
+    setUploading(true);
 
-    const newFiles = Array.from(fileList).map((file) => ({
-      name: file.name,
-      url: URL.createObjectURL(file),
-      type: file.type,
-    }));
+    let successCount = 0;
+    for (const file of Array.from(fileList)) {
+      const { error } = await supabase.storage.from(BUCKET).upload(file.name, file, {
+        upsert: true,
+      });
+      if (error) {
+        toast({ title: `Erro: ${file.name}`, description: error.message, variant: "destructive" });
+      } else {
+        successCount++;
+      }
+    }
 
-    setUploadedFiles((prev) => [...prev, ...newFiles]);
-    toast({
-      title: "Upload realizado",
-      description: `${newFiles.length} arquivo(s) enviado(s) com sucesso.`,
-    });
-
+    if (successCount > 0) {
+      toast({ title: "Upload concluído", description: `${successCount} arquivo(s) enviado(s).` });
+      fetchFiles();
+    }
+    setUploading(false);
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
-  const totalFiles = files.length + uploadedFiles.length;
+  const getPublicUrl = (name: string) => {
+    const { data } = supabase.storage.from(BUCKET).getPublicUrl(name);
+    return data.publicUrl;
+  };
 
   return (
     <div className="min-h-screen bg-background p-4 md:p-8">
@@ -103,41 +124,41 @@ const FileManager = () => {
 
         <Card className="border-border">
           <CardHeader className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-            <CardTitle className="font-display text-2xl">
-              Gerenciador de Arquivos
-            </CardTitle>
-            <div className="flex gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={selectAll}
-              >
-                {selectedFiles.size === totalFiles && totalFiles > 0
-                  ? "Desmarcar todos"
-                  : "Selecionar todos"}
+            <CardTitle className="text-2xl">Gerenciador de Arquivos</CardTitle>
+            <div className="flex gap-2 flex-wrap">
+              <Button variant="outline" size="sm" onClick={fetchFiles} disabled={loading}>
+                <RefreshCw className={`h-4 w-4 mr-1 ${loading ? "animate-spin" : ""}`} />
+                Atualizar
+              </Button>
+              <Button variant="outline" size="sm" onClick={selectAll}>
+                {selected.size === files.length && files.length > 0 ? "Desmarcar" : "Selecionar todos"}
               </Button>
               <Button
                 variant="destructive"
                 size="sm"
                 onClick={deleteSelected}
-                disabled={selectedFiles.size === 0}
+                disabled={selected.size === 0 || deleting}
                 className="gap-1"
               >
-                <Trash2 className="h-4 w-4" />
-                Excluir ({selectedFiles.size})
+                {deleting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                Excluir ({selected.size})
               </Button>
             </div>
           </CardHeader>
 
           <CardContent className="space-y-6">
-            {/* Upload area */}
+            {/* Upload */}
             <div
-              onClick={() => fileInputRef.current?.click()}
+              onClick={() => !uploading && fileInputRef.current?.click()}
               className="flex cursor-pointer flex-col items-center justify-center gap-3 rounded-lg border-2 border-dashed border-border bg-muted/50 p-8 transition-colors hover:border-primary hover:bg-muted"
             >
-              <Upload className="h-10 w-10 text-muted-foreground" />
+              {uploading ? (
+                <Loader2 className="h-10 w-10 animate-spin text-primary" />
+              ) : (
+                <Upload className="h-10 w-10 text-muted-foreground" />
+              )}
               <p className="text-sm text-muted-foreground">
-                Clique para fazer upload de novos arquivos
+                {uploading ? "Enviando..." : "Clique para fazer upload de arquivos"}
               </p>
               <input
                 ref={fileInputRef}
@@ -151,73 +172,60 @@ const FileManager = () => {
             {/* File list */}
             <div className="space-y-1">
               <p className="mb-3 text-sm font-medium text-muted-foreground">
-                Arquivos do projeto ({totalFiles})
+                Arquivos no storage ({files.length})
               </p>
 
-              {totalFiles === 0 && (
-                <p className="py-8 text-center text-muted-foreground">
-                  Nenhum arquivo encontrado. Faça upload para começar.
-                </p>
+              {loading && (
+                <div className="flex justify-center py-8">
+                  <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                </div>
               )}
 
-              {files.map((file) => (
-                <div
-                  key={file.path}
-                  onClick={() => toggleSelect(file.path)}
-                  className={`flex cursor-pointer items-center gap-3 rounded-md px-3 py-2.5 transition-colors ${
-                    selectedFiles.has(file.path)
-                      ? "bg-primary/10 ring-1 ring-primary/30"
-                      : "hover:bg-muted"
-                  }`}
-                >
-                  <input
-                    type="checkbox"
-                    checked={selectedFiles.has(file.path)}
-                    onChange={() => toggleSelect(file.path)}
-                    className="h-4 w-4 accent-primary"
-                  />
-                  {getFileIcon(file.type)}
-                  <div className="flex-1 min-w-0">
-                    <p className="truncate text-sm font-medium">{file.name}</p>
-                    <p className="truncate text-xs text-muted-foreground">
-                      {file.path}
-                    </p>
-                  </div>
+              {!loading && files.length === 0 && (
+                <div className="flex flex-col items-center gap-2 py-12 text-muted-foreground">
+                  <FolderOpen className="h-12 w-12" />
+                  <p>Nenhum arquivo. Faça upload para começar.</p>
                 </div>
-              ))}
+              )}
 
-              {uploadedFiles.map((file) => (
-                <div
-                  key={file.name}
-                  onClick={() => toggleSelect(file.name)}
-                  className={`flex cursor-pointer items-center gap-3 rounded-md px-3 py-2.5 transition-colors ${
-                    selectedFiles.has(file.name)
-                      ? "bg-primary/10 ring-1 ring-primary/30"
-                      : "hover:bg-muted"
-                  }`}
-                >
-                  <input
-                    type="checkbox"
-                    checked={selectedFiles.has(file.name)}
-                    onChange={() => toggleSelect(file.name)}
-                    className="h-4 w-4 accent-primary"
-                  />
-                  <FileIcon className="h-5 w-5 text-green-500" />
-                  <div className="flex-1 min-w-0">
-                    <p className="truncate text-sm font-medium">{file.name}</p>
-                    <p className="truncate text-xs text-muted-foreground">
-                      Novo upload
-                    </p>
-                  </div>
-                  {file.type.startsWith("image/") && (
-                    <img
-                      src={file.url}
-                      alt={file.name}
-                      className="h-10 w-10 rounded object-cover"
-                    />
-                  )}
-                </div>
-              ))}
+              {!loading &&
+                files.map((file) => {
+                  const isImage = file.metadata?.mimetype?.startsWith("image/");
+                  return (
+                    <div
+                      key={file.name}
+                      onClick={() => toggleSelect(file.name)}
+                      className={`flex cursor-pointer items-center gap-3 rounded-md px-3 py-2.5 transition-colors ${
+                        selected.has(file.name)
+                          ? "bg-primary/10 ring-1 ring-primary/30"
+                          : "hover:bg-muted"
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={selected.has(file.name)}
+                        onChange={() => toggleSelect(file.name)}
+                        className="h-4 w-4 accent-[hsl(var(--primary))]"
+                      />
+                      {isImage ? (
+                        <img
+                          src={getPublicUrl(file.name)}
+                          alt={file.name}
+                          className="h-10 w-10 rounded object-cover"
+                        />
+                      ) : (
+                        <FileIcon className="h-5 w-5 text-muted-foreground" />
+                      )}
+                      <div className="flex-1 min-w-0">
+                        <p className="truncate text-sm font-medium">{file.name}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {file.metadata?.size ? formatSize(file.metadata.size) : "—"}{" "}
+                          · {new Date(file.created_at).toLocaleDateString("pt-BR")}
+                        </p>
+                      </div>
+                    </div>
+                  );
+                })}
             </div>
           </CardContent>
         </Card>
